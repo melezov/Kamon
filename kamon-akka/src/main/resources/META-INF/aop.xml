@@ -7,7 +7,7 @@
     <aspect name="akka.kamon.instrumentation.TraceContextIntoRepointableActorRefMixin"/>
     <aspect name="akka.kamon.instrumentation.TraceContextIntoSystemMessageMixin"/>
     <aspect name="akka.kamon.instrumentation.ActorSystemMessageInstrumentation"/>
-    <aspect name="akka.kamon.instrumentation.TraceContextIntoEnvelopeMixin"/>
+    <aspect name="akka.kamon.instrumentation.EnvelopeContextIntoEnvelopeMixin"/>
     <aspect name="akka.kamon.instrumentation.MetricsIntoActorCellsMixin"/>
     <aspect name="akka.kamon.instrumentation.ActorCellInstrumentation"/>
     <aspect name="akka.kamon.instrumentation.RoutedActorCellInstrumentation"/>
