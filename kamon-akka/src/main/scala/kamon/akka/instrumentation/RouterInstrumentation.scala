@@ -4,7 +4,7 @@ import akka.actor.{ Cell, Props, ActorRef, ActorSystem }
 import akka.dispatch.{ Envelope, MessageDispatcher }
 import akka.routing.RoutedActorCell
 import kamon.akka.RouterMetrics
-import kamon.trace.EmptyTraceContext
+import kamon.trace.{ Tracer, EmptyTraceContext }
 import kamon.util.NanoTimestamp
 import org.aspectj.lang.ProceedingJoinPoint
 import org.aspectj.lang.annotation._
@@ -21,9 +21,34 @@ trait RouterInstrumentation {
 
 object RouterInstrumentation {
 
-  def createRouterInstrumentation(): RouterInstrumentation = ???
+  def createRouterInstrumentation(): RouterInstrumentation = ContextPropagationRouterInstrumentation
 }
 
+object NoOpRouterInstrumentation extends RouterInstrumentation {
+  def captureEnvelopeContext(): EnvelopeContext = EnvelopeContext.Empty
+  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = pjp.proceed()
+  def processFailure(failure: Throwable): Unit = {}
+  def routeeAdded(): Unit = {}
+  def routeeRemoved(): Unit = {}
+  def cleanup(): Unit = {}
+}
+
+object ContextPropagationRouterInstrumentation extends RouterInstrumentation {
+  def captureEnvelopeContext(): EnvelopeContext =
+    EnvelopeContext(new NanoTimestamp(0L), Tracer.currentContext, None)
+
+  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
+    println("=======> Envelope: " + envelopeContext)
+    Tracer.withContext(envelopeContext.context)(pjp.proceed())
+  }
+
+  def processFailure(failure: Throwable): Unit = {}
+  def routeeAdded(): Unit = {}
+  def routeeRemoved(): Unit = {}
+  def cleanup(): Unit = {}
+}
+
+/*
 class RouterMetricsInstrumentation(routerMetrics: RouterMetrics) {
   private val _metricsOpt = Some(routerMetrics)
 
@@ -48,6 +73,7 @@ class RouterMetricsInstrumentation(routerMetrics: RouterMetrics) {
     }
   }
 }
+*/
 
 @Aspect
 class RoutedActorCellInstrumentation {
@@ -69,7 +95,8 @@ class RoutedActorCellInstrumentation {
 
   @Around("sendMessageInRouterActorCell(cell, envelope)")
   def aroundSendMessageInRouterActorCell(pjp: ProceedingJoinPoint, cell: RoutedActorCell, envelope: Envelope): Any = {
-    routerInstrumentation(cell).processMessage(pjp, envelope)
+    println("Capturing the send of: " + envelope + " in: " + cell.self)
+    routerInstrumentation(cell).processMessage(pjp, envelope.asInstanceOf[InstrumentedEnvelope].envelopeContext())
 
     /*    val cellMetrics = cell.asInstanceOf[RoutedActorCellMetrics]
     val timestampBeforeProcessing = System.nanoTime()

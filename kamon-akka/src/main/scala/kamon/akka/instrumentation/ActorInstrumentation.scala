@@ -68,14 +68,9 @@ object ActorInstrumentation {
 }
 
 object NoOpActorInstrumentation extends ActorInstrumentation {
-  def captureEnvelopeContext(): EnvelopeContext =
-    EnvelopeContext.Empty
-
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef =
-    pjp.proceed()
-
+  def captureEnvelopeContext(): EnvelopeContext = EnvelopeContext.Empty
+  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = pjp.proceed()
   def cleanup(): Unit = {}
-
   def processFailure(failure: Throwable): Unit = {}
 }
 
