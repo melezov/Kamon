@@ -107,6 +107,7 @@ class MetricsOnlyActorInstrumentation(entity: Entity, actorMetrics: ActorMetrics
       actorMetrics.timeInMailbox.record(timeInMailbox.nanos)
       actorMetrics.mailboxSize.decrement()
 
+      println("DDDDDDDDDDDDDDDDDDDDDDDDD The router is: " + envelopeContext)
       envelopeContext.router.map { routerMetrics ⇒
         routerMetrics.processingTime.record(processingTime.nanos)
         routerMetrics.timeInMailbox.record(timeInMailbox.nanos)
