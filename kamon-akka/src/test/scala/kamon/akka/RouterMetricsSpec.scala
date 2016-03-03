@@ -33,18 +33,18 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
   "the Kamon router metrics" should {
     "respect the configured include and exclude filters" in new RouterMetricsFixtures {
       createTestPoolRouter("tracked-pool-router")
-      createTestGroupRouter("tracked-group-router")
+      //createTestGroupRouter("tracked-group-router")
       createTestPoolRouter("non-tracked-pool-router")
-      createTestGroupRouter("non-tracked-group-router")
+      //createTestGroupRouter("non-tracked-group-router")
       createTestPoolRouter("tracked-explicitly-excluded-pool-router")
-      createTestGroupRouter("tracked-explicitly-excluded-group-router")
+      //createTestGroupRouter("tracked-explicitly-excluded-group-router")
 
       routerMetricsRecorderOf("user/tracked-pool-router") should not be empty
-      routerMetricsRecorderOf("user/tracked-group-router") should not be empty
+      //routerMetricsRecorderOf("user/tracked-group-router") should not be empty
       routerMetricsRecorderOf("user/non-tracked-pool-router") shouldBe empty
-      routerMetricsRecorderOf("user/non-tracked-group-router") shouldBe empty
+      //routerMetricsRecorderOf("user/non-tracked-group-router") shouldBe empty
       routerMetricsRecorderOf("user/tracked-explicitly-excluded-pool-router") shouldBe empty
-      routerMetricsRecorderOf("user/tracked-explicitly-excluded-group-router") shouldBe empty
+      //routerMetricsRecorderOf("user/tracked-explicitly-excluded-group-router") shouldBe empty
     }
 
     "record the routing-time of the receive function for pool routers" in new RouterMetricsFixtures {
@@ -57,7 +57,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
 
       routerSnapshot.histogram("routing-time").get.numberOfMeasurements should be(1L)
     }
-
+    /*
     "record the routing-time of the receive function for group routers" in new RouterMetricsFixtures {
       val listener = TestProbe()
       val router = createTestGroupRouter("measuring-routing-time-in-group-router")
@@ -67,9 +67,9 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       val routerSnapshot = collectMetricsOf("user/measuring-routing-time-in-group-router").get
 
       routerSnapshot.histogram("routing-time").get.numberOfMeasurements should be(1L)
-    }
+    }*/
 
-    "record the processing-time of the receive function for pool routers" in new RouterMetricsFixtures {
+    /*    "record the processing-time of the receive function for pool routers" in new RouterMetricsFixtures {
       val timingsListener = TestProbe()
       val router = createTestPoolRouter("measuring-processing-time-in-pool-router")
 
@@ -80,7 +80,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       routerSnapshot.histogram("processing-time").get.numberOfMeasurements should be(1L)
       routerSnapshot.histogram("processing-time").get.recordsIterator.next().count should be(1L)
       routerSnapshot.histogram("processing-time").get.recordsIterator.next().level should be(timings.approximateProcessingTime +- 10.millis.toNanos)
-    }
+    }*/
 
     "record the processing-time of the receive function for group routers" in new RouterMetricsFixtures {
       val timingsListener = TestProbe()
@@ -110,7 +110,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       routerSnapshot.counter("errors").get.count should be(10L)
     }
 
-    "record the number of errors for group routers" in new RouterMetricsFixtures {
+    /*    "record the number of errors for group routers" in new RouterMetricsFixtures {
       val listener = TestProbe()
       val router = createTestGroupRouter("measuring-errors-in-group-router")
 
@@ -123,7 +123,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
 
       val routerSnapshot = collectMetricsOf("user/measuring-errors-in-group-router").get
       routerSnapshot.counter("errors").get.count should be(10L)
-    }
+    }*/
 
     "record the time-in-mailbox for pool routers" in new RouterMetricsFixtures {
       val timingsListener = TestProbe()
@@ -151,6 +151,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       routerSnapshot.histogram("time-in-mailbox").get.recordsIterator.next().level should be(timings.approximateTimeInMailbox +- 10.millis.toNanos)
     }
 
+    /*
     "record the time-in-mailbox for group routers" in new RouterMetricsFixtures {
       val timingsListener = TestProbe()
       val router = createTestGroupRouter("measuring-time-in-mailbox-in-group-router")
@@ -163,6 +164,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       routerSnapshot.histogram("time-in-mailbox").get.recordsIterator.next().count should be(1L)
       routerSnapshot.histogram("time-in-mailbox").get.recordsIterator.next().level should be(timings.approximateTimeInMailbox +- 10.millis.toNanos)
     }
+*/
 
     "clean up the associated recorder when the pool router is stopped" in new RouterMetricsFixtures {
       val trackedRouter = createTestPoolRouter("stop-in-pool-router")
@@ -177,7 +179,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       routerMetricsRecorderOf("user/stop-in-pool-router") shouldBe empty
     }
 
-    "clean up the associated recorder when the group router is stopped" in new RouterMetricsFixtures {
+    /*    "clean up the associated recorder when the group router is stopped" in new RouterMetricsFixtures {
       val trackedRouter = createTestPoolRouter("stop-in-group-router")
       val firstRecorder = routerMetricsRecorderOf("user/stop-in-group-router").get
 
@@ -188,7 +190,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       deathWatcher.expectTerminated(trackedRouter)
 
       routerMetricsRecorderOf("user/stop-in-group-router") shouldBe empty
-    }
+    }*/
   }
 
   override protected def afterAll(): Unit = shutdown()
