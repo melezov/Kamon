@@ -4,17 +4,14 @@ import akka.actor.{ Cell, Props, ActorRef, ActorSystem }
 import akka.dispatch.{ Envelope, MessageDispatcher }
 import akka.routing.RoutedActorCell
 import kamon.Kamon
-import kamon.akka.TraceContextPropagationSettings.{ Always, MonitoredActorsOnly, Off }
-import kamon.akka.{ AkkaExtension, RouterMetrics }
+import kamon.akka.RouterMetrics
 import kamon.metric.Entity
-import kamon.trace.{ Tracer, EmptyTraceContext }
-import kamon.util.NanoTimestamp
+import kamon.util.RelativeNanoTimestamp
 import org.aspectj.lang.ProceedingJoinPoint
 import org.aspectj.lang.annotation._
 
 trait RouterInstrumentation {
-  def captureEnvelopeContext(): EnvelopeContext
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef
+  def processMessage(pjp: ProceedingJoinPoint): AnyRef
   def processFailure(failure: Throwable): Unit
   def cleanup(): Unit
 
@@ -24,42 +21,18 @@ trait RouterInstrumentation {
 
 object RouterInstrumentation {
 
-  def createRouterInstrumentation(system: ActorSystem, selfRef: ActorRef): RouterInstrumentation = {
-    val cellName = system.name + "/" + selfRef.path.elements.mkString("/")
-    val entity = Entity(cellName, "akka-router")
-    val isTracked = Kamon.metrics.shouldTrack(entity)
-    def routerMetrics = Kamon.metrics.entity(RouterMetrics, entity)
+  def createRouterInstrumentation(cell: Cell): RouterInstrumentation = {
+    val cellInfo = CellInfo.cellInfoFor(cell, cell.system, cell.self, cell.parent)
+    def routerMetrics = Kamon.metrics.entity(RouterMetrics, cellInfo.entity)
 
-    AkkaExtension.traceContextPropagation match {
-      case Off if isTracked                 ⇒ new MetricsOnlyRouterInstrumentation(entity, routerMetrics)
-      case Off                              ⇒ NoOpRouterInstrumentation
-      case MonitoredActorsOnly if isTracked ⇒ new FullRouterInstrumentation(entity, routerMetrics)
-      case MonitoredActorsOnly              ⇒ NoOpRouterInstrumentation
-      case Always if isTracked              ⇒ new FullRouterInstrumentation(entity, routerMetrics)
-      case Always                           ⇒ ContextPropagationRouterInstrumentation
-    }
-
+    if (cellInfo.isTracked)
+      new MetricsOnlyRouterInstrumentation(cellInfo.entity, routerMetrics)
+    else NoOpRouterInstrumentation
   }
 }
 
 object NoOpRouterInstrumentation extends RouterInstrumentation {
-  def captureEnvelopeContext(): EnvelopeContext = EnvelopeContext.Empty
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = pjp.proceed()
-  def processFailure(failure: Throwable): Unit = {}
-  def routeeAdded(): Unit = {}
-  def routeeRemoved(): Unit = {}
-  def cleanup(): Unit = {}
-}
-
-object ContextPropagationRouterInstrumentation extends RouterInstrumentation {
-  def captureEnvelopeContext(): EnvelopeContext =
-    EnvelopeContext(new NanoTimestamp(0L), Tracer.currentContext, None)
-
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
-    println("=======> Envelope: " + envelopeContext)
-    Tracer.withContext(envelopeContext.context)(pjp.proceed())
-  }
-
+  def processMessage(pjp: ProceedingJoinPoint): AnyRef = pjp.proceed()
   def processFailure(failure: Throwable): Unit = {}
   def routeeAdded(): Unit = {}
   def routeeRemoved(): Unit = {}
@@ -68,67 +41,24 @@ object ContextPropagationRouterInstrumentation extends RouterInstrumentation {
 
 class MetricsOnlyRouterInstrumentation(entity: Entity, routerMetrics: RouterMetrics) extends RouterInstrumentation {
 
-  def captureEnvelopeContext(): EnvelopeContext = EnvelopeContext.Empty
+  def processMessage(pjp: ProceedingJoinPoint): AnyRef = {
+    val timestampBeforeProcessing = RelativeNanoTimestamp.now
 
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
-    val timestampBeforeProcessing = NanoTimestamp.now
-
-    println("Measuring some actual ROUTING TIME for: " + envelopeContext)
     try {
       pjp.proceed()
     } finally {
-      val timestampAfterProcessing = NanoTimestamp.now
+      val timestampAfterProcessing = RelativeNanoTimestamp.now
       val routingTime = timestampAfterProcessing - timestampBeforeProcessing
 
       routerMetrics.routingTime.record(routingTime.nanos)
     }
   }
+
   def processFailure(failure: Throwable): Unit = {}
   def routeeAdded(): Unit = {}
   def routeeRemoved(): Unit = {}
   def cleanup(): Unit = {}
 }
-
-class FullRouterInstrumentation(entity: Entity, routerMetrics: RouterMetrics) extends MetricsOnlyRouterInstrumentation(entity, routerMetrics) {
-  private val _routerMetricsOption = Some(routerMetrics)
-
-  override def captureEnvelopeContext(): EnvelopeContext = {
-    EnvelopeContext(NanoTimestamp.now, Tracer.currentContext, _routerMetricsOption)
-  }
-
-  override def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
-    Tracer.withContext(envelopeContext.context) {
-      super.processMessage(pjp, envelopeContext)
-    }
-  }
-}
-
-/*
-class RouterMetricsInstrumentation(routerMetrics: RouterMetrics) {
-  private val _metricsOpt = Some(routerMetrics)
-
-  def captureEnvelopeContext(): EnvelopeContext = {
-    EnvelopeContext(NanoTimestamp.now, EmptyTraceContext, _metricsOpt)
-  }
-
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
-    val timestampBeforeProcessing = NanoTimestamp.now
-
-    try {
-      pjp.proceed()
-    } finally {
-      val timestampAfterProcessing = NanoTimestamp.now
-
-      val timeInMailbox = timestampBeforeProcessing - envelopeContext.nanoTime
-      val processingTime = timestampAfterProcessing - timestampBeforeProcessing
-
-      routerMetrics.processingTime.record(processingTime.nanos)
-      routerMetrics.timeInMailbox.record(timeInMailbox.nanos)
-
-    }
-  }
-}
-*/
 
 @Aspect
 class RoutedActorCellInstrumentation {
@@ -142,7 +72,7 @@ class RoutedActorCellInstrumentation {
   @After("routedActorCellCreation(cell, system, ref, props, dispatcher, routeeProps, supervisor)")
   def afterRoutedActorCellCreation(cell: RoutedActorCell, system: ActorSystem, ref: ActorRef, props: Props, dispatcher: MessageDispatcher, routeeProps: Props, supervisor: ActorRef): Unit = {
     cell.asInstanceOf[RouterInstrumentationAware].setRouterInstrumentation(
-      RouterInstrumentation.createRouterInstrumentation(system, ref))
+      RouterInstrumentation.createRouterInstrumentation(cell))
   }
 
   @Pointcut("execution(* akka.routing.RoutedActorCell.sendMessage(*)) && this(cell) && args(envelope)")
@@ -150,30 +80,7 @@ class RoutedActorCellInstrumentation {
 
   @Around("sendMessageInRouterActorCell(cell, envelope)")
   def aroundSendMessageInRouterActorCell(pjp: ProceedingJoinPoint, cell: RoutedActorCell, envelope: Envelope): Any = {
-    envelope.asInstanceOf[InstrumentedEnvelope].setEnvelopeContext(
-      routerInstrumentation(cell).captureEnvelopeContext())
-
-    println(s"ENVELOP: [${envelope}] =====> ${envelope.asInstanceOf[InstrumentedEnvelope].envelopeContext()}")
-
-    routerInstrumentation(cell).processMessage(pjp, envelope.asInstanceOf[InstrumentedEnvelope].envelopeContext())
-
-    /*    val cellMetrics = cell.asInstanceOf[RoutedActorCellMetrics]
-    val timestampBeforeProcessing = System.nanoTime()
-    val contextAndTimestamp = envelope.asInstanceOf[TimestampedTraceContextAware]
-
-    try {
-      Tracer.withContext(contextAndTimestamp.traceContext) {
-
-        // The router metrics recorder will only be picked up if the message is sent from a tracked router.
-        RouterAwareEnvelope.dynamicRouterMetricsRecorder.withValue(cellMetrics.routerRecorder) {
-          pjp.proceed()
-        }
-      }
-    } finally {
-      cellMetrics.routerRecorder.foreach { routerRecorder ⇒
-        routerRecorder.routingTime.record(System.nanoTime() - timestampBeforeProcessing)
-      }
-    }*/
+    routerInstrumentation(cell).processMessage(pjp)
   }
 }
 

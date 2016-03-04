@@ -1,14 +1,13 @@
 package akka.kamon.instrumentation
 
-import kamon.akka.RouterMetrics
 import kamon.trace.{ EmptyTraceContext, TraceContext }
-import kamon.util.NanoTimestamp
+import kamon.util.RelativeNanoTimestamp
 import org.aspectj.lang.annotation.{ DeclareMixin, Aspect }
 
-case class EnvelopeContext(nanoTime: NanoTimestamp, context: TraceContext, router: Option[RouterMetrics])
+case class EnvelopeContext(nanoTime: RelativeNanoTimestamp, context: TraceContext)
 
 object EnvelopeContext {
-  val Empty = EnvelopeContext(new NanoTimestamp(0L), EmptyTraceContext, None)
+  val Empty = EnvelopeContext(RelativeNanoTimestamp.zero, EmptyTraceContext)
 }
 
 trait InstrumentedEnvelope {

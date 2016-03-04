@@ -69,7 +69,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       routerSnapshot.histogram("routing-time").get.numberOfMeasurements should be(1L)
     }*/
 
-    /*    "record the processing-time of the receive function for pool routers" in new RouterMetricsFixtures {
+    "record the processing-time of the receive function for pool routers" in new RouterMetricsFixtures {
       val timingsListener = TestProbe()
       val router = createTestPoolRouter("measuring-processing-time-in-pool-router")
 
@@ -80,8 +80,9 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       routerSnapshot.histogram("processing-time").get.numberOfMeasurements should be(1L)
       routerSnapshot.histogram("processing-time").get.recordsIterator.next().count should be(1L)
       routerSnapshot.histogram("processing-time").get.recordsIterator.next().level should be(timings.approximateProcessingTime +- 10.millis.toNanos)
-    }*/
+    }
 
+    /*
     "record the processing-time of the receive function for group routers" in new RouterMetricsFixtures {
       val timingsListener = TestProbe()
       val router = createTestGroupRouter("measuring-processing-time-in-group-router")
@@ -94,6 +95,7 @@ class RouterMetricsSpec extends BaseKamonSpec("router-metrics-spec") {
       routerSnapshot.histogram("processing-time").get.recordsIterator.next().count should be(1L)
       routerSnapshot.histogram("processing-time").get.recordsIterator.next().level should be(timings.approximateProcessingTime +- 10.millis.toNanos)
     }
+*/
 
     "record the number of errors for pool routers" in new RouterMetricsFixtures {
       val listener = TestProbe()

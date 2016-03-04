@@ -5,141 +5,16 @@ import java.util.concurrent.locks.ReentrantLock
 import akka.actor._
 import akka.dispatch.Envelope
 import akka.dispatch.sysmsg.SystemMessage
-import akka.routing.{ RoutedActorRef, RoutedActorCell }
-import kamon.Kamon
-import kamon.akka.{ AkkaExtension, ActorMetrics, RouterMetrics }
-import kamon.metric.Entity
-import kamon.trace.{ EmptyTraceContext, Tracer }
-import kamon.util.NanoTimestamp
+import kamon.trace.Tracer
 import org.aspectj.lang.ProceedingJoinPoint
 import org.aspectj.lang.annotation._
 
 import scala.collection.immutable
 
-trait ActorInstrumentation {
-  def captureEnvelopeContext(): EnvelopeContext
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef
-  def processFailure(failure: Throwable): Unit
-  def cleanup(): Unit
-}
-
-object ActorInstrumentation {
-  case class CellInfo(entity: Entity, isRouter: Boolean, isRoutee: Boolean, isTracked: Boolean)
-
-  private def cellName(system: ActorSystem, ref: ActorRef): String =
-    system.name + "/" + ref.path.elements.mkString("/")
-
-  private def cellInfoFor(cell: Cell, system: ActorSystem, ref: ActorRef, parent: ActorRef): CellInfo = {
-    val pathString = ref.path.elements.mkString("/")
-    val isRootSupervisor = pathString.length == 0 || pathString == "user" || pathString == "system"
-
-    val isRouter = cell.isInstanceOf[RoutedActorCell]
-    val isRoutee = parent.isInstanceOf[RoutedActorRef]
-    val tags = if (isRoutee) {
-      Map("router" -> parent.path.elements.mkString("/"))
-    } else Map.empty[String, String]
-
-    val category = if (isRouter) RouterMetrics.category else ActorMetrics.category
-    val entity = Entity(cellName(system, ref), category, tags)
-    val isTracked = !isRootSupervisor && Kamon.metrics.shouldTrack(entity)
-
-    println("Returning: " + CellInfo(entity, isRouter, isRoutee, isTracked).toString)
-    CellInfo(entity, isRouter, isRoutee, isTracked)
-  }
-
-  def createActorInstrumentation(cell: Cell, system: ActorSystem, ref: ActorRef, parent: ActorRef): ActorInstrumentation = {
-    import kamon.akka.TraceContextPropagationSettings._
-    val cellInfo = cellInfoFor(cell, system, ref, parent)
-    def actorMetrics = Kamon.metrics.entity(ActorMetrics, cellInfo.entity)
-
-    if (cellInfo.isRouter)
-      NoOpActorInstrumentation
-    else {
-
-      AkkaExtension.traceContextPropagation match {
-        case Off if cellInfo.isTracked                 ⇒ new MetricsOnlyActorInstrumentation(cellInfo.entity, actorMetrics)
-        case Off                                       ⇒ NoOpActorInstrumentation
-        case MonitoredActorsOnly if cellInfo.isTracked ⇒ new FullActorInstrumentation(cellInfo.entity, actorMetrics)
-        case MonitoredActorsOnly                       ⇒ NoOpActorInstrumentation
-        case Always if cellInfo.isTracked              ⇒ new FullActorInstrumentation(cellInfo.entity, actorMetrics)
-        case Always                                    ⇒ ContextPropagationActorInstrumentation
-      }
-    }
-  }
-}
-
-object NoOpActorInstrumentation extends ActorInstrumentation {
-  def captureEnvelopeContext(): EnvelopeContext = EnvelopeContext.Empty
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = pjp.proceed()
-  def cleanup(): Unit = {}
-  def processFailure(failure: Throwable): Unit = {}
-}
-
-object ContextPropagationActorInstrumentation extends ActorInstrumentation {
-  def captureEnvelopeContext(): EnvelopeContext =
-    EnvelopeContext(new NanoTimestamp(0L), Tracer.currentContext, None)
-
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef =
-    Tracer.withContext(envelopeContext.context)(pjp.proceed())
-
-  def cleanup(): Unit = {}
-
-  def processFailure(failure: Throwable): Unit = {}
-}
-
-class MetricsOnlyActorInstrumentation(entity: Entity, actorMetrics: ActorMetrics) extends ActorInstrumentation {
-  def captureEnvelopeContext(): EnvelopeContext = {
-    actorMetrics.mailboxSize.increment()
-    EnvelopeContext(NanoTimestamp.now, EmptyTraceContext, None)
-  }
-
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
-    val timestampBeforeProcessing = NanoTimestamp.now
-
-    try {
-      pjp.proceed()
-    } finally {
-      val timestampAfterProcessing = NanoTimestamp.now
-
-      val timeInMailbox = timestampBeforeProcessing - envelopeContext.nanoTime
-      val processingTime = timestampAfterProcessing - timestampBeforeProcessing
-
-      actorMetrics.processingTime.record(processingTime.nanos)
-      actorMetrics.timeInMailbox.record(timeInMailbox.nanos)
-      actorMetrics.mailboxSize.decrement()
-
-      envelopeContext.router.map { routerMetrics ⇒
-        routerMetrics.processingTime.record(processingTime.nanos)
-        routerMetrics.timeInMailbox.record(timeInMailbox.nanos)
-      }
-
-    }
-  }
-
-  def cleanup(): Unit =
-    Kamon.metrics.removeEntity(entity)
-
-  def processFailure(failure: Throwable): Unit =
-    actorMetrics.errors.increment()
-}
-
-class FullActorInstrumentation(entity: Entity, actorMetrics: ActorMetrics) extends MetricsOnlyActorInstrumentation(entity, actorMetrics) {
-  override def captureEnvelopeContext(): EnvelopeContext = {
-    actorMetrics.mailboxSize.increment()
-    EnvelopeContext(NanoTimestamp.now, Tracer.currentContext, None)
-  }
-
-  override def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
-    Tracer.withContext(envelopeContext.context) {
-      super.processMessage(pjp, envelopeContext)
-    }
-  }
-}
-
 @Aspect
 class ActorCellInstrumentation {
 
-  def actorInstrumentation(cell: Cell): ActorInstrumentation =
+  def actorInstrumentation(cell: Cell): ActorCellMonitor =
     cell.asInstanceOf[ActorInstrumentationAware].actorInstrumentation
 
   @Pointcut("execution(akka.actor.ActorCell.new(..)) && this(cell) && args(system, ref, *, *, parent)")
@@ -151,13 +26,13 @@ class ActorCellInstrumentation {
   @After("actorCellCreation(cell, system, ref, parent)")
   def afterCreation(cell: Cell, system: ActorSystem, ref: ActorRef, parent: ActorRef): Unit = {
     cell.asInstanceOf[ActorInstrumentationAware].setActorInstrumentation(
-      ActorInstrumentation.createActorInstrumentation(cell, system, ref, parent))
+      ActorCellMonitor.createActorInstrumentation(cell, system, ref, parent))
   }
 
   @After("repointableActorRefCreation(cell, system, ref, parent)")
   def afterCreation2(cell: Cell, system: ActorSystem, ref: ActorRef, parent: ActorRef): Unit = {
     cell.asInstanceOf[ActorInstrumentationAware].setActorInstrumentation(
-      ActorInstrumentation.createActorInstrumentation(cell, system, ref, parent))
+      ActorCellMonitor.createActorInstrumentation(cell, system, ref, parent))
   }
 
   @Pointcut("execution(* akka.actor.ActorCell.invoke(*)) && this(cell) && args(envelope)")
@@ -276,16 +151,16 @@ class ActorCellInstrumentation {
 }
 
 trait ActorInstrumentationAware {
-  def actorInstrumentation: ActorInstrumentation
-  def setActorInstrumentation(ai: ActorInstrumentation): Unit
+  def actorInstrumentation: ActorCellMonitor
+  def setActorInstrumentation(ai: ActorCellMonitor): Unit
 }
 
 object ActorInstrumentationAware {
   def apply(): ActorInstrumentationAware = new ActorInstrumentationAware {
-    private var _ai: ActorInstrumentation = _
+    private var _ai: ActorCellMonitor = _
 
-    def setActorInstrumentation(ai: ActorInstrumentation): Unit = _ai = ai
-    def actorInstrumentation: ActorInstrumentation = _ai
+    def setActorInstrumentation(ai: ActorCellMonitor): Unit = _ai = ai
+    def actorInstrumentation: ActorCellMonitor = _ai
   }
 }
 
